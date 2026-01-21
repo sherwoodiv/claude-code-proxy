@@ -1,8 +1,8 @@
-# Anthropic API Proxy for Gemini & OpenAI Models 🔄
+# Anthropic API Proxy for Gemini, OpenAI, Ollama & Custom Models 🔄
 
-**Use Anthropic clients (like Claude Code) with Gemini, OpenAI, or direct Anthropic backends.** 🤝
+**Use Anthropic clients (like Claude Code) with Gemini, OpenAI, Ollama, corporate APIs, or direct Anthropic backends.** 🤝
 
-A proxy server that lets you use Anthropic clients with Gemini, OpenAI, or Anthropic models themselves (a transparent proxy of sorts), all via LiteLLM. 🌉
+A proxy server that lets you use Anthropic clients with Gemini, OpenAI, local Ollama models, custom/corporate APIs, or Anthropic models themselves (a transparent proxy of sorts), all via LiteLLM. 🌉
 
 
 ![Anthropic API Proxy](pic.png)
@@ -11,10 +11,13 @@ A proxy server that lets you use Anthropic clients with Gemini, OpenAI, or Anthr
 
 ### Prerequisites
 
-- OpenAI API key 🔑
-- Google AI Studio (Gemini) API key (if using Google provider) 🔑
-- Google Cloud Project with Vertex AI API enabled (if using Application Default Credentials for Gemini) ☁️
-- [uv](https://github.com/astral-sh/uv) installed.
+- [uv](https://github.com/astral-sh/uv) installed
+- **One of the following** (depending on your preferred provider):
+  - OpenAI API key 🔑
+  - Google AI Studio (Gemini) API key 🔑
+  - Google Cloud Project with Vertex AI API enabled (for ADC) ☁️
+  - Local Ollama installation 🦙
+  - Corporate/custom OpenAI-compatible API endpoint 🏢
 
 ### Setup 🛠️
 
@@ -40,19 +43,25 @@ A proxy server that lets you use Anthropic clients with Gemini, OpenAI, or Anthr
    Edit `.env` and fill in your API keys and model configurations:
 
    *   `ANTHROPIC_API_KEY`: (Optional) Needed only if proxying *to* Anthropic models.
-   *   `OPENAI_API_KEY`: Your OpenAI API key (Required if using the default OpenAI preference or as fallback).
-   *   `GEMINI_API_KEY`: Your Google AI Studio (Gemini) API key (Required if `PREFERRED_PROVIDER=google` and `USE_VERTEX_AUTH=true`).
-   *   `USE_VERTEX_AUTH` (Optional): Set to `true` to use Application Default Credentials (ADC) will be used (no static API key required). Note: when USE_VERTEX_AUTH=true, you must configure `VERTEX_PROJECT` and `VERTEX_LOCATION`.
-   *   `VERTEX_PROJECT` (Optional): Your Google Cloud Project ID (Required if `PREFERRED_PROVIDER=google` and `USE_VERTEX_AUTH=true`).
-   *   `VERTEX_LOCATION` (Optional): The Google Cloud region for Vertex AI (e.g., `us-central1`) (Required if `PREFERRED_PROVIDER=google` and `USE_VERTEX_AUTH=true`).
-   *   `PREFERRED_PROVIDER` (Optional): Set to `openai` (default), `google`, or `anthropic`. This determines the primary backend for mapping `haiku`/`sonnet`.
-   *   `BIG_MODEL` (Optional): The model to map `sonnet` requests to. Defaults to `gpt-4.1` (if `PREFERRED_PROVIDER=openai`) or `gemini-2.5-pro-preview-03-25`. Ignored when `PREFERRED_PROVIDER=anthropic`.
-   *   `SMALL_MODEL` (Optional): The model to map `haiku` requests to. Defaults to `gpt-4.1-mini` (if `PREFERRED_PROVIDER=openai`) or `gemini-2.0-flash`. Ignored when `PREFERRED_PROVIDER=anthropic`.
+   *   `OPENAI_API_KEY`: Your OpenAI API key (Required if using the default OpenAI preference).
+   *   `GEMINI_API_KEY`: Your Google AI Studio (Gemini) API key (Required if `PREFERRED_PROVIDER=google` and not using Vertex AI).
+   *   `USE_VERTEX_AUTH` (Optional): Set to `true` to use Application Default Credentials (ADC) for Gemini. Note: when `USE_VERTEX_AUTH=true`, you must configure `VERTEX_PROJECT` and `VERTEX_LOCATION`.
+   *   `VERTEX_PROJECT` (Optional): Your Google Cloud Project ID (Required if using Vertex AI).
+   *   `VERTEX_LOCATION` (Optional): The Google Cloud region for Vertex AI (e.g., `us-central1`).
+   *   `PREFERRED_PROVIDER` (Optional): Set to `openai` (default), `google`, `anthropic`, `ollama`, or `custom`. This determines the primary backend for mapping `haiku`/`sonnet`.
+   *   `BIG_MODEL` (Optional): The model to map `sonnet` requests to. Defaults to `gpt-4.1`. Ignored when `PREFERRED_PROVIDER=anthropic`.
+   *   `SMALL_MODEL` (Optional): The model to map `haiku` requests to. Defaults to `gpt-4.1-mini`. Ignored when `PREFERRED_PROVIDER=anthropic`.
+   *   `OLLAMA_BASE_URL` (Optional): Ollama server URL. Defaults to `http://localhost:11434`.
+   *   `CUSTOM_BASE_URL` (Optional): Custom/corporate API endpoint URL.
+   *   `CUSTOM_API_KEY` (Optional): API key for custom/corporate endpoint.
 
    **Mapping Logic:**
    - If `PREFERRED_PROVIDER=openai` (default), `haiku`/`sonnet` map to `SMALL_MODEL`/`BIG_MODEL` prefixed with `openai/`.
    - If `PREFERRED_PROVIDER=google`, `haiku`/`sonnet` map to `SMALL_MODEL`/`BIG_MODEL` prefixed with `gemini/` *if* those models are in the server's known `GEMINI_MODELS` list (otherwise falls back to OpenAI mapping).
    - If `PREFERRED_PROVIDER=anthropic`, `haiku`/`sonnet` requests are passed directly to Anthropic with the `anthropic/` prefix without remapping to different models.
+   - If `PREFERRED_PROVIDER=ollama`, `haiku`/`sonnet` map to `SMALL_MODEL`/`BIG_MODEL` and are routed to local Ollama. **No fallback to public APIs.**
+   - If `PREFERRED_PROVIDER=custom`, `haiku`/`sonnet` map to `SMALL_MODEL`/`BIG_MODEL` and are routed to `CUSTOM_BASE_URL`. **No fallback to public APIs.**
+   - If `PREFERRED_PROVIDER=openai` with a custom `OPENAI_BASE_URL` (not api.openai.com), **no fallback to public APIs** occurs.
 
 4. **Run the server**:
    ```bash
@@ -194,17 +203,61 @@ BIG_MODEL="gpt-4o" # Example specific model
 SMALL_MODEL="gpt-4o-mini" # Example specific model
 ```
 
+**Example 5: Use Local Ollama Models** 🦙
+```dotenv
+PREFERRED_PROVIDER="ollama"
+OLLAMA_BASE_URL="http://localhost:11434"
+BIG_MODEL="llama3.3:70b"
+SMALL_MODEL="llama3.2:latest"
+# No API keys needed - runs entirely locally
+# No fallback to public APIs
+```
+
+*Use case: Run completely offline with local models. All requests go to your Ollama instance without any external API calls.*
+
+**Example 6: Use Corporate/Private API** 🏢
+```dotenv
+PREFERRED_PROVIDER="custom"
+CUSTOM_BASE_URL="https://your-corporate-api.example.com/v1"
+CUSTOM_API_KEY="your-corporate-api-key"
+BIG_MODEL="gpt-4-corporate"
+SMALL_MODEL="gpt-3.5-corporate"
+# No fallback to public APIs
+```
+
+*Use case: Route all requests through your corporate API gateway without any calls to public APIs like OpenAI or Gemini.*
+
+**Example 7: Use Azure OpenAI**
+```dotenv
+PREFERRED_PROVIDER="openai"
+OPENAI_BASE_URL="https://your-resource.openai.azure.com/openai/deployments/your-deployment"
+OPENAI_API_KEY="your-azure-api-key"
+BIG_MODEL="gpt-4"
+SMALL_MODEL="gpt-35-turbo"
+# No fallback to public OpenAI API (custom base URL detected)
+```
+
+*Use case: Use Azure OpenAI Service instead of public OpenAI API. The proxy detects the custom base URL and won't fall back to public APIs.*
+
 ## How It Works 🧩
 
 This proxy works by:
 
 1. **Receiving requests** in Anthropic's API format 📥
-2. **Translating** the requests to OpenAI format via LiteLLM 🔄
-3. **Sending** the translated request to OpenAI 📤
-4. **Converting** the response back to Anthropic format 🔄
-5. **Returning** the formatted response to the client ✅
+2. **Mapping models** based on your `PREFERRED_PROVIDER` configuration 🗺️
+3. **Translating** the requests to the target format via LiteLLM 🔄
+4. **Sending** the translated request to your configured backend (OpenAI, Gemini, Ollama, custom API, or Anthropic) 📤
+5. **Converting** the response back to Anthropic format 🔄
+6. **Returning** the formatted response to the client ✅
 
 The proxy handles both streaming and non-streaming responses, maintaining compatibility with all Claude clients. 🌊
+
+### No Public API Fallback Mode
+
+When using `ollama`, `custom`, or a custom `OPENAI_BASE_URL`, the proxy operates in "no fallback" mode:
+- All requests are routed exclusively to your configured endpoint
+- No requests are ever sent to public APIs (OpenAI, Gemini, Anthropic)
+- This ensures complete control over where your data is sent
 
 ## Contributing 🤝
 
