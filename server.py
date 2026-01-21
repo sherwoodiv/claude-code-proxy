@@ -92,13 +92,28 @@ USE_VERTEX_AUTH = os.environ.get("USE_VERTEX_AUTH", "False").lower() == "true"
 # Get OpenAI base URL from environment (if set)
 OPENAI_BASE_URL = os.environ.get("OPENAI_BASE_URL")
 
+# Ollama configuration
+OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
+
+# Custom provider configuration (for corporate/private APIs)
+CUSTOM_BASE_URL = os.environ.get("CUSTOM_BASE_URL")
+CUSTOM_API_KEY = os.environ.get("CUSTOM_API_KEY")
+
 # Get preferred provider (default to openai)
+# Supported values: openai, google, anthropic, ollama, custom
 PREFERRED_PROVIDER = os.environ.get("PREFERRED_PROVIDER", "openai").lower()
 
 # Get model mapping configuration from environment
 # Default to latest OpenAI models if not set
 BIG_MODEL = os.environ.get("BIG_MODEL", "gpt-4.1")
 SMALL_MODEL = os.environ.get("SMALL_MODEL", "gpt-4.1-mini")
+
+# Determine if we should disable fallback to public APIs
+# True when using custom URLs (ollama, custom, or openai with custom base URL)
+DISABLE_PUBLIC_FALLBACK = PREFERRED_PROVIDER in ["ollama", "custom"] or (
+    PREFERRED_PROVIDER == "openai" and OPENAI_BASE_URL and
+    "api.openai.com" not in OPENAI_BASE_URL
+)
 
 # List of OpenAI models
 OPENAI_MODELS = [
@@ -212,18 +227,54 @@ class MessagesRequest(BaseModel):
             clean_v = clean_v[7:]
         elif clean_v.startswith('gemini/'):
             clean_v = clean_v[7:]
+        elif clean_v.startswith('ollama/'):
+            clean_v = clean_v[7:]
+        elif clean_v.startswith('custom/'):
+            clean_v = clean_v[7:]
 
         # --- Mapping Logic --- START ---
         mapped = False
+
+        # Anthropic mode - pass through to Anthropic API
         if PREFERRED_PROVIDER == "anthropic":
             # Don't remap to big/small models, just add the prefix
             new_model = f"anthropic/{clean_v}"
             mapped = True
 
+        # Ollama mode - use local Ollama models without fallback
+        elif PREFERRED_PROVIDER == "ollama":
+            if 'haiku' in clean_v.lower():
+                new_model = f"ollama/{SMALL_MODEL}"
+                mapped = True
+            elif 'sonnet' in clean_v.lower():
+                new_model = f"ollama/{BIG_MODEL}"
+                mapped = True
+            else:
+                # For any other model, use ollama prefix
+                new_model = f"ollama/{clean_v}"
+                mapped = True
+
+        # Custom provider mode - use custom endpoint without fallback
+        elif PREFERRED_PROVIDER == "custom":
+            if 'haiku' in clean_v.lower():
+                new_model = f"custom/{SMALL_MODEL}"
+                mapped = True
+            elif 'sonnet' in clean_v.lower():
+                new_model = f"custom/{BIG_MODEL}"
+                mapped = True
+            else:
+                # For any other model, use custom prefix
+                new_model = f"custom/{clean_v}"
+                mapped = True
+
         # Map Haiku to SMALL_MODEL based on provider preference
         elif 'haiku' in clean_v.lower():
             if PREFERRED_PROVIDER == "google" and SMALL_MODEL in GEMINI_MODELS:
                 new_model = f"gemini/{SMALL_MODEL}"
+                mapped = True
+            elif DISABLE_PUBLIC_FALLBACK:
+                # Use OpenAI prefix but with custom base URL (no fallback to public API)
+                new_model = f"openai/{SMALL_MODEL}"
                 mapped = True
             else:
                 new_model = f"openai/{SMALL_MODEL}"
@@ -233,6 +284,10 @@ class MessagesRequest(BaseModel):
         elif 'sonnet' in clean_v.lower():
             if PREFERRED_PROVIDER == "google" and BIG_MODEL in GEMINI_MODELS:
                 new_model = f"gemini/{BIG_MODEL}"
+                mapped = True
+            elif DISABLE_PUBLIC_FALLBACK:
+                # Use OpenAI prefix but with custom base URL (no fallback to public API)
+                new_model = f"openai/{BIG_MODEL}"
                 mapped = True
             else:
                 new_model = f"openai/{BIG_MODEL}"
@@ -252,7 +307,7 @@ class MessagesRequest(BaseModel):
             logger.debug(f"📌 MODEL MAPPING: '{original_model}' ➡️ '{new_model}'")
         else:
              # If no mapping occurred and no prefix exists, log warning or decide default
-             if not v.startswith(('openai/', 'gemini/', 'anthropic/')):
+             if not v.startswith(('openai/', 'gemini/', 'anthropic/', 'ollama/', 'custom/')):
                  logger.warning(f"⚠️ No prefix or mapping rule for model: '{original_model}'. Using as is.")
              new_model = v # Ensure we return the original if no rule applied
 
@@ -290,11 +345,45 @@ class TokenCountRequest(BaseModel):
             clean_v = clean_v[7:]
         elif clean_v.startswith('gemini/'):
             clean_v = clean_v[7:]
+        elif clean_v.startswith('ollama/'):
+            clean_v = clean_v[7:]
+        elif clean_v.startswith('custom/'):
+            clean_v = clean_v[7:]
 
         # --- Mapping Logic --- START ---
         mapped = False
+
+        # Anthropic mode - pass through to Anthropic API
+        if PREFERRED_PROVIDER == "anthropic":
+            new_model = f"anthropic/{clean_v}"
+            mapped = True
+
+        # Ollama mode - use local Ollama models without fallback
+        elif PREFERRED_PROVIDER == "ollama":
+            if 'haiku' in clean_v.lower():
+                new_model = f"ollama/{SMALL_MODEL}"
+                mapped = True
+            elif 'sonnet' in clean_v.lower():
+                new_model = f"ollama/{BIG_MODEL}"
+                mapped = True
+            else:
+                new_model = f"ollama/{clean_v}"
+                mapped = True
+
+        # Custom provider mode - use custom endpoint without fallback
+        elif PREFERRED_PROVIDER == "custom":
+            if 'haiku' in clean_v.lower():
+                new_model = f"custom/{SMALL_MODEL}"
+                mapped = True
+            elif 'sonnet' in clean_v.lower():
+                new_model = f"custom/{BIG_MODEL}"
+                mapped = True
+            else:
+                new_model = f"custom/{clean_v}"
+                mapped = True
+
         # Map Haiku to SMALL_MODEL based on provider preference
-        if 'haiku' in clean_v.lower():
+        elif 'haiku' in clean_v.lower():
             if PREFERRED_PROVIDER == "google" and SMALL_MODEL in GEMINI_MODELS:
                 new_model = f"gemini/{SMALL_MODEL}"
                 mapped = True
@@ -324,7 +413,7 @@ class TokenCountRequest(BaseModel):
         if mapped:
             logger.debug(f"📌 TOKEN COUNT MAPPING: '{original_model}' ➡️ '{new_model}'")
         else:
-             if not v.startswith(('openai/', 'gemini/', 'anthropic/')):
+             if not v.startswith(('openai/', 'gemini/', 'anthropic/', 'ollama/', 'custom/')):
                  logger.warning(f"⚠️ No prefix or mapping rule for token count model: '{original_model}'. Using as is.")
              new_model = v # Ensure we return the original if no rule applied
 
@@ -1123,7 +1212,21 @@ async def create_message(
         litellm_request = convert_anthropic_to_litellm(request)
         
         # Determine which API key to use based on the model
-        if request.model.startswith("openai/"):
+        if request.model.startswith("ollama/"):
+            # Ollama doesn't require an API key, just the base URL
+            litellm_request["api_base"] = OLLAMA_BASE_URL
+            logger.debug(f"Using Ollama at {OLLAMA_BASE_URL} for model: {request.model}")
+        elif request.model.startswith("custom/"):
+            # Custom provider - use CUSTOM_BASE_URL and optionally CUSTOM_API_KEY
+            if CUSTOM_BASE_URL:
+                litellm_request["api_base"] = CUSTOM_BASE_URL
+            if CUSTOM_API_KEY:
+                litellm_request["api_key"] = CUSTOM_API_KEY
+            # For custom provider, we need to use openai format via litellm
+            # Replace the custom/ prefix with openai/ for litellm compatibility
+            litellm_request["model"] = "openai/" + request.model[7:]
+            logger.debug(f"Using custom provider at {CUSTOM_BASE_URL} for model: {request.model}")
+        elif request.model.startswith("openai/"):
             litellm_request["api_key"] = OPENAI_API_KEY
             # Use custom OpenAI base URL if configured
             if OPENAI_BASE_URL:
@@ -1440,9 +1543,16 @@ async def count_tokens(
                 "model": converted_request["model"],
                 "messages": converted_request["messages"],
             }
-            
-            # Add custom base URL for OpenAI models if configured
-            if request.model.startswith("openai/") and OPENAI_BASE_URL:
+
+            # Add custom base URL based on provider
+            if request.model.startswith("ollama/"):
+                token_counter_args["api_base"] = OLLAMA_BASE_URL
+            elif request.model.startswith("custom/"):
+                if CUSTOM_BASE_URL:
+                    token_counter_args["api_base"] = CUSTOM_BASE_URL
+                # Update model to use openai format for litellm
+                token_counter_args["model"] = "openai/" + request.model[7:]
+            elif request.model.startswith("openai/") and OPENAI_BASE_URL:
                 token_counter_args["api_base"] = OPENAI_BASE_URL
             
             # Count tokens
